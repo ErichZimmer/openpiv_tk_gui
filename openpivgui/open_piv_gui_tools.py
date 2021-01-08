@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 ''' Methods for reuse within the OpenPivGui project.'''
+from skimage.measure import points_in_poly
+from matplotlib.collections import PatchCollection
+import matplotlib.patches as patches
 
 import numpy as np
 import math
@@ -125,12 +128,59 @@ def get_dim(array):
            len(set(array[:, 1])))
 
 
-def save(x, y, u, v, mask, sig2noise, filename, fmt='%8.4f', delimiter='\t'):
-    out = np.vstack([m.ravel() for m in [x, y, u, v, mask, sig2noise]])
+
+def save(x, y, u, v, tp, filename, fmt='%8.4f', delimiter='\t'):
+    out = np.vstack([m.ravel() for m in [x, y, u, v, tp]])
     np.savetxt(filename, out.T, fmt=fmt, delimiter=delimiter)
 
     
-
 def _round(number, decimals = 0):
     multiplier = 10 **decimals
     return(math.floor(number * multiplier + 0.5) / multiplier) 
+
+
+def coords_to_xymask(x, y, mask_coords):
+    verts = []
+    for i in range(len(mask_coords)):
+        vex = []
+        for j in range(len(mask_coords[i])):
+            vex.append((mask_coords[i][j][1], mask_coords[i][j][0]))
+        verts.append(vex)
+            
+    masks = []
+    for i in range(len(verts)):
+         masks.append(points_in_poly(np.c_[y.flatten(),
+                                           x.flatten()],
+                                     verts[i])
+                    )
+    xymask = masks[0]
+    for i in range(1, len(masks)):
+        xymask += masks[i]
+    return(xymask.reshape(x.shape).astype(np.int))
+
+
+def add_disp_roi(axes,
+                 xmin, ymin, xmax, ymax, 
+                 linewidth,
+                 edgecolor,
+                 linestyle,
+                 padleft = 1, padright = 1):
+    axes.add_patch(patches.Rectangle((xmin - padleft,
+                                     ymin - padleft), 
+                                     xmax - xmin + padright,
+                                     ymax - ymin + padright,
+                                     linewidth = linewidth,
+                                     edgecolor = edgecolor,
+                                     facecolor = 'none',
+                                     linestyle = linestyle))
+        
+        
+def add_disp_mask(axes, coords, color, alpha):
+    if len(coords) > 0:
+        shapes = []
+        for i in range(len(coords)):
+            shapes.append(patches.Polygon(coords[i]))
+        disp_mask = PatchCollection(shapes,
+                               color = color, 
+                               alpha = alpha)
+        axes.add_collection(disp_mask) 

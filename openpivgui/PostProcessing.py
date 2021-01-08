@@ -25,196 +25,70 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 __email__ = 'vennemann@fh-muenster.de'
 
 
-class PostProcessing():
-    '''Post Processing routines for vector data.
+def ValidateResults(parameter, u, v, tp):
+    mask = tp  
+    
+    '''if s2n(self):
+        u, v, Mask = piv_vld.sig2noise_val(
+            u, v, s2n,
+            threshold=self.p['sig2noise_threshold'])'''
+        
+    if parameter['vld_global_thr']:
+        u, v, Mask = piv_vld.global_val(
+            u, v,
+            u_thresholds=(parameter['MinU'], parameter['MaxU']),
+            v_thresholds=(parameter['MinV'], parameter['MaxV']))
+        mask += Mask # consolidate effects of mask
+                
+    if parameter['vld_global_std']:
+        u, v, Mask = piv_vld.global_std(
+            u, v, 
+            std_threshold=parameter['global_std_threshold'])
+        mask += Mask
+                    
+    if parameter['vld_local_med']:
+        u, v, Mask = piv_vld.local_median_val(
+            u, v,
+            u_threshold = parameter['local_median_threshold'],
+            v_threshold = parameter['local_median_threshold'],
+            size        = parameter['local_median_size'])  
+        mask += Mask
+                
+    if parameter['repl']:
+        u, v = piv_flt.replace_outliers(
+            u, v,
+            method      = parameter['repl_method'],
+            max_iter    = parameter['repl_iter'],
+            kernel_size = parameter['repl_kernel'])
+        
+    return u, v, mask
 
-    Parameters
-    ----------
-    params : openpivgui.OpenPivParams
-        Parameter object.
-    '''
 
-    def __init__(self, params):
-        '''Initialization method.'''
-        self.p = params
 
-        global delimiter
-        delimiter = self.p['delimiter']
-        if delimiter == 'tab':
-            delimiter = '\t'
-        if delimiter == 'space':
-            delimiter = ' '
-
-    def sig2noise(self):
-        '''Filter vectors based on the signal to noise threshold.
-
-        See:
-            openpiv.validation.sig2noise_val()
-        '''
-        result_fnames = []
-        for i, f in enumerate(self.p['fnames']):
-            data = np.loadtxt(f)
-            u, v, mask = piv_vld.sig2noise_val(
-                data[:, 2], data[:, 3], data[:, 5],
-                threshold=self.p['sig2noise_threshold'])
-
-            save_fname = create_save_vec_fname(
-                path=f,
-                postfix='_sig2noise')
-
-            save(data[:, 0],
-                 data[:, 1],
-                 u, v,
-                 data[:, 4] + mask,
-                 sig2noise=data[:, 5],
-                 filename=save_fname,
-                 delimiter=delimiter)
-            result_fnames.append(save_fname)
-        return(result_fnames)
-
-    def global_std(self):
-        '''Filters vectors by a multiple of the standard deviation.
-
-        See Also
-        --------
-        openpiv.validation.global_std()
-        '''
-        result_fnames = []
-        for i, f in enumerate(self.p['fnames']):
-            data = np.loadtxt(f)
-            u, v, mask = piv_vld.global_std(
-                data[:, 2], data[:, 3],
-                std_threshold=self.p['global_std_threshold'])
-            save_fname = create_save_vec_fname(
-                path=f,
-                postfix='_std_thrhld')
-            save(data[:, 0],
-                 data[:, 1],
-                 u, v,
-                 data[:, 4] + mask,
-                 data[:, 5],
-                 save_fname,
-                 delimiter=delimiter)
-            result_fnames.append(save_fname)
-        return(result_fnames)
-
-    def global_val(self):
-        '''Filter vectors based on a global min-max threshold.
-
-        See:
-            openpiv.validation.global_val()
-        '''
-        result_fnames = []
-        for i, f in enumerate(self.p['fnames']):
-            data = np.loadtxt(f)
-            u, v, mask = piv_vld.global_val(
-                data[:, 2], data[:, 3],
-                u_thresholds=(self.p['MinU'], self.p['MaxU']),
-                v_thresholds=(self.p['MinV'], self.p['MaxV']))
-            save_fname = create_save_vec_fname(
-                path=f,
-                postfix='_glob_thrhld')
-            save(data[:, 0],
-                 data[:, 1],
-                 u, v,
-                 data[:, 4] + mask,
-                 data[:, 5],
-                 save_fname,
-                 delimiter=delimiter)
-            result_fnames.append(save_fname)
-        return(result_fnames)
-
-    def local_median(self):
-        '''Filter vectors based on a local median threshold.
-
-        See Also
-        --------
-        openpiv.validation.local_median_val()
-        '''
-        result_fnames = []
-        for i, f in enumerate(self.p['fnames']):
-            data = np.loadtxt(f)
-            u, v, mask = piv_vld.local_median_val(
-                data[:, 2], data[:, 3],
-                u_threshold=self.p['local_median_threshold'],
-                v_threshold=self.p['local_median_threshold'],
-                size=self.p['local_median_size'])
-            save_fname = create_save_vec_fname(
-                path=f,
-                postfix='_med_thrhld')
-            save(data[:, 0],
-                 data[:, 1],
-                 u, v,
-                 data[:, 4] + mask,
-                 data[:, 5],
-                 save_fname,
-                 delimiter=delimiter)
-            result_fnames.append(save_fname)
-        return(result_fnames)
-
-    def repl_outliers(self):
-        '''Replace outliers.'''
-        result_fnames = []
-        for i, f in enumerate(self.p['fnames']):
-            data = np.loadtxt(f)
-            u, v = piv_flt.replace_outliers(
-                np.array([data[:, 2]]), np.array([data[:, 3]]),
-                method=self.p['repl_method'],
-                max_iter=self.p['repl_iter'],
-                kernel_size=self.p['repl_kernel'])
-            save_fname = create_save_vec_fname(
-                path=f,
-                postfix='_repl')
-            save(data[:, 0],
-                 data[:, 1],
-                 u, v,
-                 data[:, 4],
-                 data[:, 5],
-                 save_fname,
-                 delimiter=delimiter)
-            result_fnames.append(save_fname)
-        return(result_fnames)
-
-    def smoothn_r(self):
-        '''Smoothn postprocessing results.'''
-        result_fnames = []
-        for i, f in enumerate(self.p['fnames']):
-            data = np.loadtxt(f)
-            u, _, _, _ = piv_smt.smoothn(
-                data[:, 2], s=self.p['smoothn_val'], isrobust=self.p['robust'])
-            v, _, _, _ = piv_smt.smoothn(
-                data[:, 3], s=self.p['smoothn_val'], isrobust=self.p['robust'])
-            save_fname = create_save_vec_fname(
-                path=f,
-                postfix='_smthn')
-            save(data[:, 0],
-                 data[:, 1],
-                 u, v,
-                 data[:, 4],
-                 data[:, 5],
-                 save_fname,
-                 delimiter=delimiter)
-            result_fnames.append(save_fname)
-        return(result_fnames)
-
-    def average(self):
-        '''Average all results.'''
-        '''data = np.loadtxt(self.p['fnames'][0])
-        u = data[:, 2]
-        v = data[:, 3]
-        for i, f in enumerate(self.p['fnames']):
-            data = np.loadtxt(f)
-            u += data[:,2]; u /= 2
-            v += data[:,3]; v /= 2
-        save_fname = create_save_vec_fname(
-            path=self.p['fnames'][0],
-            postfix='_average')
-        piv_tls.save(data[:, 0],
-                     data[:, 1],
-                     u, v,
-                     data[:, 4],
-                     save_fname,
-                     delimiter = delimiter)
-        print(f)
-        return(save_fname)'''
-        return('Averaging of vectors fileds is not implemented.')
+def ModifyResults(parameter, x, y, u, v):
+    
+    if parameter['offset_grid']:
+        x_off = parameter['offset_x']
+        y_off = parameter['offset_y']
+    else:
+        x_off = 0
+        y_off = 0
+        
+    if parameter['modify_velocity']:
+        u_mod = parameter['modify_u']
+        v_mod = parameter['modify_v']
+    else:
+        u_mod = 0
+        v_mod = 0
+        
+    if parameter['smoothn']:
+        u, _, _, _ = piv_smt.smoothn(
+            u, s = parameter['smoothn_val'],
+            isrobust = parameter['robust'])
+        
+        v, _, _, _ = piv_smt.smoothn(
+            v, s = parameter['smoothn_val'],
+            isrobust = parameter['robust'])
+        
+        return x_off, y_off, u_mod, v_mod, u, v
+        

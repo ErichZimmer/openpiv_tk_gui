@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-'''Post Processing for OpenPIVGui.'''
+'''Pre Processing for OpenPIVGui.'''
 
 from skimage import exposure, filters, util
-from scipy.ndimage.filters import gaussian_filter
+from scipy.ndimage.filters import gaussian_filter, median_filter
+from scipy.signal.signaltools import wiener as wiener_filter
 import openpiv.preprocess as piv_pre
 import openpiv.tools as piv_tls
 import numpy as np
@@ -88,92 +89,105 @@ def gen_background(self, image1=None, image2=None):
         print('Background algorithm not implemented.')
 
 
-def process_images(self, img, background=None):
-    self.p = self
+def process_images(img,  
+                   preproc = True,
+                   do_background = False,
+                   background = None,
+                   roi_xmin = '',
+                   roi_xmax = '',
+                   roi_ymin = '',
+                   roi_ymax = '',
+                   invert = False,
+                   median_filt = False,
+                   median_kernel = 20,
+                   CLAHE = False,
+                   CLAHE_auto_kernel = True,
+                   CLAHE_kernel = 20,
+                   CLAHE_clip = 1,
+                   high_pass = False,
+                   hp_sigma = 5,
+                   intensity_cap = False,
+                   ic_mult = 2,
+                   wiener_filt = False,
+                   wiener_size = 5,
+                   gaussian_filt = False,
+                   gf_sigma = 2,
+                   intensity_clip = False,
+                   intensity_clip_min = 15,
+        ):
+    
     '''Starting the pre-processing chain'''
-
     # normalize image to [0, 1] float
     maximum = img.max()
     img = img / maximum
-    resize = self.p['img_int_resize']
+    
+    # resize intensities to [0, 255]
+    resize = 255
+    
+    if preproc:
+        if invert == True:
+            img = util.invert(img)
 
-    if self.p['invert']:
-        img = util.invert(img)
+        if do_background:
+            try:
+                img *= 255
+                img -= background
+                img[img<0] = 0 # values less than zero are set to zero
+                img = img / 255
+            except:
+                print('Could not subtract background. Ignoring background subtraction.')
 
-    if self.p['background_subtract']:
-        try:
-            img *= 255
-            img -= background
-            img[img < 0] = 0  # values less than zero are set to zero
-            img = img / 255
-        except:
-            print('Could not subtract background. Ignoring background subtraction.')
+        if roi_xmin and roi_xmax and roi_ymin and roi_ymax != ('', ' '):
+            try:
+                xmin=int(roi_xmin)
+                xmax=int(roi_xmax)
+                ymin=int(roi_ymin)
+                ymax=int(roi_ymax)
+                img = img[ymin:ymax,xmin:xmax]  
+            except:
+                print('invalid value in roi, ignoring filter.')
+        if median_filt == True:
+            img = median_filter(img, size = median_kernel)
+            
+        if CLAHE == True:
+            if CLAHE_auto_kernel:
+                kernel = None
+            else:
+                kernel = CLAHE_kernel
+            if CLAHE_clip < 1:
+                clip_limit = 0.01
+            elif CLAHE_clip > 100:
+                clip_limit = 1
+            else:
+                clip_limit = CLAHE_clip/100
+            img = exposure.equalize_adapthist(img, 
+                                              kernel_size = kernel, 
+                                              clip_limit  = clip_limit,
+                                              nbins       = 256)
 
-    if self.p['crop_ROI']:  # ROI crop done after background subtraction to avoid image shape issues
-        crop_x = (int(list(self.p['crop_roi-xminmax'].split(','))[0]),
-                  int(list(self.p['crop_roi-xminmax'].split(','))[1]))
-        crop_y = (int(list(self.p['crop_roi-yminmax'].split(','))[0]),
-                  int(list(self.p['crop_roi-yminmax'].split(','))[1]))
-        img = img[crop_y[0]:crop_y[1], crop_x[0]:crop_x[1]]
+        if high_pass == True:
+            low_pass = gaussian_filter(img, sigma = hp_sigma)
+            img -= low_pass
 
-    #if self.p['dynamic_mask']: # needs more testing
-    #    img = piv_pre.dynamic_masking(img,
-    #                                  method=self.p['dynamic_mask_type'],
-    #                                  filter_size=self.p['dynamic_mask_size'],
-    #                                  threshold=self.p['dynamic_mask_threshold'])
+        # simple intensity capping
+        if intensity_cap == True:
+            upper_limit = np.mean(img) + ic_mult * img.std()
+            img[img > upper_limit] = upper_limit
 
-    if self.p['CLAHE'] == True or self.p['high_pass_filter'] == True:
-        if self.p['CLAHE_first']:
-            if self.p['CLAHE']:
-                if self.p['CLAHE_auto_kernel']:
-                    kernel = None
-                else:
-                    kernel = self.p['CLAHE_kernel']
+        # simple intensity clipping
+        if intensity_clip == True:
+            img *= resize
+            lower_limit = intensity_clip_min
+            img[img < lower_limit] = 0
+            img /= resize
+        
+        # wiener low pass filter
+        if wiener_filt == True:
+            img = wiener_filter(img, (wiener_size, wiener_size))
+            
+        # gausian low pass with gausian kernel
+        if gaussian_filt == True:
+            img = gaussian_filter(img, sigma = gf_sigma)
 
-                img = exposure.equalize_adapthist(img,
-                                                  kernel_size=kernel,
-                                                  clip_limit=0.01,
-                                                  nbins=256)
-
-            if self.p['high_pass_filter']:
-                low_pass = gaussian_filter(img, sigma = self.p['hp_sigma'])
-                img -= low_pass
-                
-                if self.p['hp_clip']:
-                    img[img < 0] = 0
-
-        else:
-            if self.p['high_pass_filter']:
-                low_pass = gaussian_filter(img, sigma = self.p['hp_sigma'])
-                img -= low_pass
-                
-                if self.p['hp_clip']:
-                    img[img < 0] = 0
-
-            if self.p['CLAHE']:
-                if self.p['CLAHE_auto_kernel']:
-                    kernel = None
-                else:
-                    kernel = self.p['CLAHE_kernel']
-
-                img = exposure.equalize_adapthist(img,
-                                                  kernel_size=kernel,
-                                                  clip_limit=0.01,
-                                                  nbins=256)
-
-    # simple intensity capping
-    if self.p['intensity_cap_filter']:
-        upper_limit = np.mean(img) + self.p['ic_mult'] * img.std()
-        img[img > upper_limit] = upper_limit
-
-    # simple intensity clipping
-    if self.p['intensity_clip']:
-        img *= resize
-        lower_limit = self.p['intensity_clip_min']
-        img[img < lower_limit] = 0
-        img /= resize
-
-    if self.p['gaussian_filter']:
-        img = gaussian_filter(img, sigma=self.p['gf_sigma'])
-
-    return(img * resize)
+    img[img < 0] = 0
+    return(np.uint8(img * resize))

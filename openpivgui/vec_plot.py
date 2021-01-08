@@ -40,7 +40,10 @@ import matplotlib.pyplot as plt
 from copy import copy
 from matplotlib.figure import Figure
 from matplotlib.colors import LinearSegmentedColormap
-
+from skimage.measure import points_in_poly
+from openpiv.preprocess import prepare_mask_on_grid as grid_mask
+from openpivgui.open_piv_gui_tools import (coords_to_xymask, 
+    add_disp_roi, add_disp_mask)
 
 # creating a custom rainbow colormap
 import matplotlib
@@ -48,22 +51,39 @@ from matplotlib import pyplot as plt
 import numpy as np
 
 # creating a custom rainbow colormap
-short_rainbow = {'red':(
-                 (0.0, 0.0, 0.0),
-                 (0.2, 0.2, 0.2),
-                 (0.5, 0.0, 0.0),
-                 (0.8, 1.0, 1.0),
-                 (1.0, 1.0, 1.0)),
-        'green':((0.0, 0.0, 0.0),
-                 (0.2, 1.0, 1.0),
-                 (0.5, 1.0, 1.0),
-                 (0.8, 1.0, 1.0),
-                 (1.0, 0.0, 0.0)),
-        'blue': ((0.0, 1.0, 1.0),
-                 (0.2, 1.0, 1.0),
-                 (0.5, 0.0, 0.0),
-                 (0.8, 0.0, 0.0),
-                 (1.0, 0.0, 0.0))}
+#short_rainbow = {'red':(
+#                 (0.0, 0.0, 0.0),
+#                 (0.2, 0.2, 0.2),
+#                 (0.5, 0.0, 0.0),
+#                 (0.8, 1.0, 1.0),
+#                 (1.0, 1.0, 1.0)),
+#        'green':((0.0, 0.0, 0.0),
+#                 (0.2, 1.0, 1.0),
+#                 (0.5, 1.0, 1.0),
+#                 (0.8, 1.0, 1.0),
+#                 (1.0, 0.0, 0.0)),
+#        'blue': ((0.0, 1.0, 1.0),
+#                 (0.2, 1.0, 1.0),
+#                 (0.5, 0.0, 0.0),
+#                 (0.8, 0.0, 0.0),
+#                 (1.0, 0.0, 0.0))}
+
+short_rainbow = {
+        'red':  ((0.0,  0.0, 0.0),
+                 (0.27, 0.0, 0.0),
+                 (0.54, 0.0, 0.0),
+                 (0.80, 1.0, 1.0),
+                 (1.0,  1.0, 1.0)),
+        'green':((0.0,  0.0, 0.0),
+                 (0.27, 1.0, 1.0),
+                 (0.55, 1.0, 1.0),
+                 (0.80, 1.0, 1.0),
+                 (1.0,  0.0, 0.0)),
+        'blue': ((0.0,  1.0, 1.0),
+                 (0.27, 1.0, 1.0),
+                 (0.54, 0.0, 0.0),
+                 (0.80, 0.0, 0.0),
+                 (1.0,  0.0, 0.0))}
 
 long_rainbow = {'red': 
                 ((0.0, 0.0, 0.0),
@@ -131,7 +151,7 @@ def histogram(data, figure, quantity, bins, log_y):
     ax.set_title(parameter['plot_title'])
 
 
-def profiles(data, parameter, fname, figure, orientation):
+def profiles(data, parameter, figure, orientation):
     '''Plot velocity profiles.
 
     Line plots of the velocity component specified.
@@ -149,8 +169,9 @@ def profiles(data, parameter, fname, figure, orientation):
         horizontal: Plot v_y over x.
         vertical: Plot v_x over y.
     '''
-    #data = data.to_numpy().astype(np.float)
-    data = np.loadtxt(fname)
+    for i in list(data.columns.values):
+        data[i] = data[i].astype(float)
+    data = data.to_numpy().astype(np.float)
     
     dim_x, dim_y = get_dim(data)
     
@@ -184,7 +205,7 @@ def profiles(data, parameter, fname, figure, orientation):
     ax.set_title(parameter['plot_title'])
 
 
-def scatter(data, figure):
+def scatter(data, figure, ax = None):
     '''Scatter plot.
 
     Plots v_y over v_x.
@@ -196,12 +217,15 @@ def scatter(data, figure):
     figure : matplotlib.figure.Figure 
         An (empty) Figure object.
     '''
+    for i in list(data.columns.values):
+        data[i] = data[i].astype(float)
+        
     data = data.to_numpy()
     
     v_x = data[:,2]
     v_y = data[:,3]
-    
-    ax = figure.add_subplot(111)
+    if ax == None:
+        ax = figure.add_subplot(111)
     
     ax.scatter(v_x, v_y, label='scatter')
     
@@ -209,8 +233,17 @@ def scatter(data, figure):
     ax.set_ylabel('y displacement')
 
     
-def vector(data, parameter, figure, invert_yaxis=True, valid_color='blue', 
-           invalid_color='red', **kw):
+def vector(data, figure, axes,
+           image, mask_coords,
+           interr_win,
+           valid_color = 'blue', 
+           invalid_color = 'red', 
+           show_mask_vecs = True,
+           mask_vec_style = 'x',
+           mask_vec_color = 'red',
+           disp_mask_color = 'red',
+           disp_mask_alpha = 1,
+           **kw):
     '''Display a vector plot.
 
     Parameters
@@ -220,8 +253,11 @@ def vector(data, parameter, figure, invert_yaxis=True, valid_color='blue',
     figure : matplotlib.figure.Figure 
         An (empty) Figure object.
     '''
+    for i in list(data.columns.values):
+        data[i] = data[i].astype(float)
+        
     data = data.to_numpy().astype(np.float)
-
+  
     try:
         invalid = data[:, 4].astype('bool')
     except:
@@ -230,31 +266,77 @@ def vector(data, parameter, figure, invert_yaxis=True, valid_color='blue',
     # tilde means invert:
     valid = ~invalid
     
-    ax = figure.add_subplot(111)
+    ax = axes
+    ax.xaxis.set_major_formatter(plt.NullFormatter())
+    ax.yaxis.set_major_formatter(plt.NullFormatter())
+    ax.set_xticks([])
+    ax.set_yticks([])
+    figure.gca().set_aspect(1)
+                    
+    ax.imshow(image, cmap="Greys_r",)
+    ax.set_xlim([0, image.shape[1]])
+    ax.set_ylim([0, image.shape[0]])
     
-    ax.quiver(data[invalid, 0],
-              data[invalid, 1],
-              data[invalid, 2],
-              data[invalid, 3],
+     
+    x = data[:, 0]
+    y = data[:, 1]
+                
+    if len(mask_coords) > 0:
+        mask = coords_to_xymask(x, y, mask_coords)
+        u = np.ma.masked_array(data[:, 2], mask)
+        v = np.ma.masked_array(data[:, 3], mask) 
+        
+        add_disp_mask(ax, mask_coords,
+                      color = disp_mask_color,
+                      alpha = disp_mask_alpha)
+        
+        if show_mask_vecs:
+            for i in range (len(mask_coords)):
+                mask = grid_mask(
+                    x,
+                    y,
+                    np.flip(mask_coords[i])
+                )
+                ax.plot(x.flat[mask],
+                    y.flat[mask],
+                    color = mask_vec_color,
+                    marker = mask_vec_style,
+                    linestyle = '')
+            
+    else:
+        u = data[:, 2]
+        v = data[:, 3]
+    
+    
+    ax.quiver(x[invalid],
+              y[invalid],
+              u[invalid],
+              v[invalid],
               color=invalid_color,
               label='invalid', **kw)
     
-    ax.quiver(data[valid, 0],
-              data[valid, 1],
-              data[valid, 2],
-              data[valid, 3],
+    ax.quiver(x[valid],
+              y[valid],
+              u[valid],
+              v[valid],
               color=valid_color,
               label='valid', **kw)
+
+    for ax in figure.get_axes():
+        ax.invert_yaxis()
+
     
-    if invert_yaxis:
-        for ax in figure.get_axes():
-            ax.invert_yaxis()
-            
-    ax.set_xlabel('x position')
-    ax.set_ylabel('y position')
-    ax.set_title(parameter['plot_title'])
-    
-def contour(data, parameter, figure):
+def contour(data, parameter, figure, axes,
+            image, mask_coords,
+            interr_win,
+            valid_color = 'blue', 
+            invalid_color = 'red', 
+            show_mask_vecs = True,
+            mask_vec_style = 'x',
+            mask_vec_color = 'red',
+            disp_mask_color = 'red',
+            disp_mask_alpha = 1,
+            **kw):
     '''Display a contour plot    
 
     Parameters
@@ -267,17 +349,42 @@ def contour(data, parameter, figure):
        An (empty) Figure object.
     '''
     # figure for subplot
-    ax = figure.add_subplot(111)
+    ax = axes
+    ax.xaxis.set_major_formatter(plt.NullFormatter())
+    ax.yaxis.set_major_formatter(plt.NullFormatter())
+    ax.set_xticks([])
+    ax.set_yticks([])
+    figure.gca().set_aspect(1)
+                    
+    ax.imshow(image, cmap="Greys_r",)
+    ax.set_xlim([0, image.shape[1]])
+    ax.set_ylim([0, image.shape[0]])
+        
     # iteration to set value types to float
     for i in list(data.columns.values):
         data[i] = data[i].astype(float)
+        
+    data2 = data.to_numpy().astype(np.float)
+    
+    if len(mask_coords) > 0:
+        #tmp = np.zeros_like(data2[:, 0], dtype=bool)
+        #tmp.flat[mask] = True
+        mask = coords_to_xymask(data2[:, 0], 
+                                data2[:, 1], 
+                                mask_coords)
+        u = np.ma.masked_array(data2[:, 2], mask = mask)
+        v = np.ma.masked_array(data2[:, 3], mask = mask)
+    else:
+        u = data2[:, 2]
+        v = data2[:, 3]
+        
     # choosing velocity for the colormap and add it to an new colummn in data
     if parameter['velocity_color'] == 'vx':
         data['abs'] = data.vx
     elif parameter['velocity_color'] == 'vy':
         data['abs'] = data.vy
     else:
-        data['abs'] = (data.vx**2+data.vy**2)**0.5
+        data['abs'] = (u**2 + v**2)**0.5
     # pivot table for contour function    
     data_pivot = data.pivot(index = 'y',
                             columns = 'x',
@@ -308,38 +415,74 @@ def contour(data, parameter, figure):
         colormap = long_rainbow
     else:
         colormap = parameter['color_map']
-    # set contour plot to the variable fig to add a colorbar 
-    if parameter['extend_cbar']:
-        extend = 'both'
-    else:
-        extend = None
+        
     fig = ax.contourf(data_pivot.columns, 
                 data_pivot.index, 
                 data_pivot.values, 
                 levels = levels, 
                 cmap = colormap,
                 vmin = vmin,
-                vmax = vmax,
-                extend = extend)
-    
+                vmax = vmax)    
     # set the colorbar to the variable cb to add a description
-    cb = plt.colorbar(fig, ax=ax)
+    #cb = plt.colorbar(fig, ax=ax)
     
-    # set origin to top left or bottom left
-    if parameter['invert_yaxis']:
-        ax.set_ylim(ax.get_ylim()[::-1])
+    try:
+        invalid = data2[:, 4].astype('bool')
+    except:
+        invalid = np.asarray([True for i in range(len(data2))])
+    
+    # tilde means invert:
+    valid = ~invalid
+    data = data2
+    x = data[:, 0]
+    y = data[:, 1]
+                
+    if len(mask_coords) > 0:
+        #mask = coords_to_xymask(x, y, mask_coords)
+        #u = np.ma.masked_array(data[:, 2], mask)
+        #v = np.ma.masked_array(data[:, 3], mask) 
+        
+        add_disp_mask(ax, mask_coords,
+                      color = disp_mask_color,
+                      alpha = 1)
+        
+        if show_mask_vecs:
+            for i in range (len(mask_coords)):
+                mask = grid_mask(
+                    x,
+                    y,
+                    np.flip(mask_coords[i])
+                )
+                ax.plot(x.flat[mask],
+                    y.flat[mask],
+                    color = mask_vec_color,
+                    marker = mask_vec_style,
+                    linestyle = '')
+    
+    
+    ax.quiver(x[invalid],
+              y[invalid],
+              u[invalid],
+              v[invalid],
+              color=invalid_color,
+              label='invalid', **kw)
+    
+    ax.quiver(x[valid],
+              y[valid],
+              u[valid],
+              v[valid],
+              color=valid_color,
+              label='valid', **kw)
+
+    for ax in figure.get_axes():
+        ax.invert_yaxis()
         
     # description to the contour lines
-    cb.ax.set_ylabel('Velocity [m/s]')
+    #cb.ax.set_ylabel('Velocity [m/s]')
     
-    # labels for the axes
-    ax.set_xlabel('x-position')
-    ax.set_ylabel('y-position')
     
-    # plot title from the GUI
-    ax.set_title(parameter['plot_title'])
     
-def contour_and_vector(data, parameter, figure, **kw):
+def contour_and_vector(data, parameter, figure, image, mask, **kw):
     '''Display a contour plot    
 
     Parameters
@@ -352,17 +495,40 @@ def contour_and_vector(data, parameter, figure, **kw):
        An (empty) Figure object.
     '''
     # figure for subplot
-    ax = figure.add_subplot(111)
+    ax = figure.add_axes([0,0,1,1])
+    ax.xaxis.set_major_formatter(plt.NullFormatter())
+    ax.yaxis.set_major_formatter(plt.NullFormatter())
+    ax.set_xticks([])
+    ax.set_yticks([])
+    
+    figure.gca().set_aspect(1)
+    ax.set_xlim([0, image.shape[1]])
+    ax.set_ylim([0, image.shape[0]])
+    
     # iteration to set value types to float
     for i in list(data.columns.values):
         data[i] = data[i].astype(float)
+    
+    data2 = data.to_numpy().astype(np.float)
+    
+    if len(mask) > 1:
+        tmp = np.zeros_like(data2[:, 0], dtype=bool)
+        tmp.flat[mask] = True
+
+        u = np.ma.masked_array(data2[:, 2], mask = tmp)
+        v = np.ma.masked_array(data2[:, 3], mask = tmp)
+    else:
+        u = data2[:, 2]
+        v = data2[:, 3]
+
     # choosing velocity for the colormap and add it to an new colummn in data        
     if parameter['velocity_color'] == 'vx':
         data['abs'] = data.vx
     elif parameter['velocity_color'] == 'vy':
         data['abs'] = data.vy
     else:
-        data['abs'] = (data.vx**2+data.vy**2)**0.5
+        data['abs'] = (u**2 + v**2)**0.5
+        
     # pivot table for contour function    
     data_pivot = data.pivot(index = 'y',
                             columns = 'x',
@@ -405,50 +571,38 @@ def contour_and_vector(data, parameter, figure, **kw):
                 levels = levels, 
                 cmap = colormap,
                 vmin = vmin,
-                vmax = vmax,
-                extend = extend)
-    
-    # quiver plot
-    data = data.to_numpy().astype(np.float)
-
+                vmax = vmax)
     try:
-        invalid = data[:, 4].astype('bool')
+        invalid = data2[:, 4].astype('bool')
     except:
-        invalid = np.asarray([True for i in range(len(data))])
+        invalid = np.asarray([True for i in range(len(data2))])
     
     # tilde means invert:
     valid = ~invalid
-            
-    ax.quiver(data[invalid, 0],
-              data[invalid, 1],
-              data[invalid, 2],
-              data[invalid, 3],
+        
+    ax.quiver(data2[invalid, 0],
+              data2[invalid, 1],
+              u[invalid],
+              v[invalid],
               color = parameter['invalid_color'],
               label = 'invalid', **kw)
     
-    ax.quiver(data[valid, 0],
-              data[valid, 1],
-              data[valid, 2],
-              data[valid, 3],
+    ax.quiver(data2[valid, 0],
+              data2[valid, 1],
+              u[valid],
+              v[valid],
               color = parameter['valid_color'],
               label = 'valid', **kw)
     
     # set the colorbar to the variable cb to add a description
-    cb = plt.colorbar(fig, ax=ax)
+    #cb = plt.colorbar(fig, ax=ax)
     
     # set origin to top left or bottom left
     if parameter['invert_yaxis']:
         ax.set_ylim(ax.get_ylim()[::-1])
         
     # description to the contour lines
-    cb.ax.set_ylabel('Velocity [m/s]')
-    
-    # labels for the axes
-    ax.set_xlabel('x-position')
-    ax.set_ylabel('y-position')
-    
-    # plot title from the GUI
-    ax.set_title(parameter['plot_title'])    
+    #cb.ax.set_ylabel('Velocity [m/s]')   
     
 def streamlines(data, parameter, figure):
     '''Display a streamline plot.    
@@ -586,10 +740,10 @@ def streamlines(data, parameter, figure):
     if parameter['invert_yaxis']:
         ax.set_ylim(ax.get_ylim()[::-1])
         
-    # add diagram options    
-    ax.set_xlabel('x-position')
-    ax.set_ylabel('y-position')
-    ax.set_title(parameter['plot_title'])
+    ## add diagram options    
+    #ax.set_xlabel('x-position')
+    #ax.set_ylabel('y-position')
+    #ax.set_title(parameter['plot_title'])
         
     
 def pandas_plot(data, parameter, figure):
@@ -701,8 +855,6 @@ def get_dim(array):
     '''
     return(len(set(array[:, 0])),
            len(set(array[:, 1])))
-
-
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description='Plot vector data.')
